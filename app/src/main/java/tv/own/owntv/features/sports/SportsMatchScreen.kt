@@ -120,11 +120,20 @@ fun SportsMatchScreen(
 
     // The focused channel plays in the box above after the focus settles, exactly as in Live TV.
     val previewOn by liveVm.livePreviewEnabled.collectAsStateWithLifecycle()
+    val previewState by liveVm.previewEngine.state.collectAsStateWithLifecycle()
+    val previewResolution by liveVm.previewEngine.videoRes.collectAsStateWithLifecycle()
     LaunchedEffect(focused?.channel?.id, previewOn) {
         val ch = focused?.channel ?: return@LaunchedEffect
         if (!previewOn) return@LaunchedEffect
         kotlinx.coroutines.delay(700)
         liveVm.playPreview(ch)
+    }
+    LaunchedEffect(focused?.channel?.id, previewOn, previewState, previewResolution) {
+        val channel = focused?.channel ?: return@LaunchedEffect
+        val resolution = previewResolution ?: return@LaunchedEffect
+        if (previewOn && previewState == tv.own.owntv.player.LivePreviewEngine.State.PLAYING &&
+            liveVm.previewEngine.currentUrl == channel.streamUrl
+        ) vm.recordVideoResolution(channel.id, resolution)
     }
     // Focus follows the search: the tabs while there is no list (Find channels' button goes away while it
     // runs, and must not take focus with it), the first channel once there is one.
@@ -211,7 +220,7 @@ fun SportsMatchScreen(
                     is ChannelSearch.Found -> Unit
                     is ChannelSearch.Closed -> { ClosedNote(s.window); return@Column }
                     else -> {
-                        FindChannels(busy = s == ChannelSearch.Searching || s == ChannelSearch.Checking, searching = s == ChannelSearch.Searching, onFind = vm::findChannels)
+                        SearchingChannels()
                         return@Column
                     }
                 }
@@ -555,14 +564,8 @@ internal fun qualityLabel(q: tv.own.owntv.core.sports.MinQuality): String = stri
     },
 )
 
-/** A quality rank as its usual tag. */
-internal fun qualityTag(rank: Int): String? = when (rank) {
-    2 -> "HD"
-    3 -> "FHD"
-    4 -> "4K"
-    5 -> "8K"
-    else -> null
-}
+/** A resolution label learned from the player, never inferred from the channel's name. */
+internal fun qualityTag(label: String?): String? = label
 
 /**
  * One channel under Watch live: logo, name with its quality tag, why it is listed (in the tier's colour),
@@ -579,7 +582,7 @@ internal fun ChannelRow(o: WatchOption, m: Match, onClick: () -> Unit, onHold: (
         Column(Modifier.weight(1f)) {
             Row(horizontalArrangement = Arrangement.spacedBy(9.mpx), verticalAlignment = Alignment.CenterVertically) {
                 Text(o.facets.name, style = stageText(20, 700), color = StageColors.Text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                qualityTag(o.facets.qualityRank)?.let { StageTag(it) }
+                qualityTag(o.actualVideoLabel)?.let { StageTag(it) }
             }
             val (color, icon, text) = when {
                 playing -> Triple(StageColors.Muted, null, stringResource(R.string.sports_playing_now))
@@ -598,21 +601,13 @@ internal fun ChannelRow(o: WatchOption, m: Match, onClick: () -> Unit, onHold: (
     }
 }
 
-/** *Watch live* before a search: what Find channels does, and the button — or, while it runs, "Searching your channels…". */
 @Composable
-private fun FindChannels(busy: Boolean, searching: Boolean, onFind: () -> Unit) {
+private fun SearchingChannels() {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.mpx)) {
         Text(stringResource(R.string.sports_watch_live), style = stageText(24, 800), color = StageColors.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (busy && !searching) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.mpx), verticalAlignment = Alignment.CenterVertically) {
             tv.own.owntv.ui.components.OwnTVSpinner(sizeDp = 18)
-        } else if (searching) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.mpx), verticalAlignment = Alignment.CenterVertically) {
-                tv.own.owntv.ui.components.OwnTVSpinner(sizeDp = 18)
-                Text(stringResource(R.string.sports_finding_channels), style = stageText(19, 600), color = StageColors.Body, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        } else {
-            Text(stringResource(R.string.sports_find_channels_description), style = stageText(18, 400), color = StageColors.Muted, maxLines = 3, overflow = TextOverflow.Ellipsis)
-            StageButton(stringResource(R.string.sports_find_channels), onClick = onFind, icon = OwnTVIcon.SEARCH, height = 56.mpx, textSize = 19)
+            Text(stringResource(R.string.sports_finding_channels), style = stageText(19, 600), color = StageColors.Body, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
