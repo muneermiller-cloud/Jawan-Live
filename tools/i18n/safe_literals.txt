@@ -764,10 +764,6 @@
 1	technical	app/src/main/java/tv/own/owntv/features/sports/SportsMatchScreen.kt	${scoreText(m.sport, home?.score)} – ${scoreText(m.sport, away?.score)}
 1	technical	app/src/main/java/tv/own/owntv/features/sports/SportsMatchScreen.kt	(${names.joinToString(", ")})
 3	technical	app/src/main/java/tv/own/owntv/features/sports/SportsMatchScreen.kt	,
-1	technical	app/src/main/java/tv/own/owntv/features/sports/SportsMatchScreen.kt	4K
-1	technical	app/src/main/java/tv/own/owntv/features/sports/SportsMatchScreen.kt	8K
-1	technical	app/src/main/java/tv/own/owntv/features/sports/SportsMatchScreen.kt	FHD
-1	technical	app/src/main/java/tv/own/owntv/features/sports/SportsMatchScreen.kt	HD
 1	json	app/src/main/java/tv/own/owntv/features/sports/SportsMatchScreen.kt	L
 1	json	app/src/main/java/tv/own/owntv/features/sports/SportsMatchScreen.kt	W
 1	technical	app/src/main/java/tv/own/owntv/features/sports/SportsMatchScreen.kt	·
@@ -838,6 +834,9 @@
 1	technical	app/src/main/java/tv/own/owntv/features/sports/SportsSettingsScreen.kt	cricket/all
 1	technical	app/src/main/java/tv/own/owntv/features/sports/SportsTable.kt	#
 1	technical	app/src/main/java/tv/own/owntv/features/sports/SportsViewModel.kt	$startMs|$title
+1	technical	app/src/main/java/tv/own/owntv/features/sports/SportsViewModel.kt	2K
+1	technical	app/src/main/java/tv/own/owntv/features/sports/SportsViewModel.kt	4K
+1	regex	app/src/main/java/tv/own/owntv/features/sports/SportsViewModel.kt	\\d+
 1	json	app/src/main/java/tv/own/owntv/features/subtitles/SubtitleSearchViewModel.kt	ai_translated
 1	json	app/src/main/java/tv/own/owntv/features/subtitles/SubtitleSearchViewModel.kt	attributes
 1	json	app/src/main/java/tv/own/owntv/features/subtitles/SubtitleSearchViewModel.kt	data
