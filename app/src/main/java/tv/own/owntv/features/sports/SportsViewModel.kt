@@ -51,9 +51,9 @@ import tv.own.owntv.core.sports.model.StandingsTable
 import tv.own.owntv.core.sports.model.Sport
 import java.util.Locale
 
-/** Where a match page's Find channels stands (channels are searched only when asked). */
+/** Automatic channel search for the open fixture. */
 sealed interface ChannelSearch {
-    /** The match is being fetched afresh to judge Find channels' window. */
+    /** The match is being fetched before searching its channels. */
     data object Checking : ChannelSearch
     data class Closed(val window: WatchWindow) : ChannelSearch
     data object NotSearched : ChannelSearch
@@ -82,6 +82,14 @@ data class LeaguePageState(
     val table: StandingsTable?,
     val matches: List<Match>,
     val config: SportsConfig,
+)
+
+private data class MatchPageInputs(
+    val board: SportsBoard,
+    val config: SportsConfig,
+    val search: ChannelSearch,
+    val filter: WatchFilter?,
+    val playlists: List<Pair<Long, String>>,
 )
 
 /**
@@ -177,24 +185,28 @@ class SportsViewModel(
     /** The filter while a match page is open; null = the profile's defaults (Settings → Sports). */
     private val pageFilter = MutableStateFlow<WatchFilter?>(null)
 
-    /** Set by Find channels on the open match page; reset when another match opens. */
-    private val findAsked = MutableStateFlow(false)
+    /** Actual resolution observed by the shared playback engine for a channel. */
+    private val observedVideoLabels = MutableStateFlow<Map<Long, String>>(emptyMap())
 
-    /** Find channels: search this match's channels (only this match, only now). */
-    fun findChannels() { findAsked.value = true }
+    fun recordVideoResolution(channelId: Long, resolution: String) {
+        if (qualityRank(resolution) == 0) return
+        if (observedVideoLabels.value[channelId] == resolution) return
+        observedVideoLabels.value = (observedVideoLabels.value - channelId + (channelId to resolution)).entries
+            .toList().takeLast(MAX_REMEMBERED_RESOLUTIONS).associate { it.toPair() }
+    }
 
     /**
-     * The open match, kept fresh while shown: its details and table come from the stored board
-     * (`Demand.MatchPage` / `Demand.LeaguePage` fetch only what is live or missing). Channels are not
-     * searched until Find channels; a search already made under the current guide shows at once.
+ * The open match, kept fresh while shown: its details and table come from the stored board
+ * (`Demand.MatchPage` / `Demand.LeaguePage` fetch only what is live or missing). Its channels are
+ * searched automatically as soon as the fixture is available.
      */
     val matchPage: StateFlow<MatchPageState?> = openMatch.flatMapLatest { m ->
         if (m == null) return@flatMapLatest flowOf(null)
         val leagueKey = League.keyOf(m.sport, m.leagueSlug).takeIf { SportsCatalog.league(it) != null }
         val boards = if (leagueKey == null) repository.observe(Demand.MatchPage(m))
         else combine(repository.observe(Demand.MatchPage(m)), repository.observe(Demand.LeaguePage(leagueKey))) { a, _ -> a }
-        // Find channels' window is judged on the match fetched now, not the stored copy: a match can run
-        // long, and a kick-off can move. Re-judged each minute while the page is open.
+        // The fixture's channel matches are collected as soon as the fixture is available. The fresh
+        // match is re-read each minute so a kick-off move or state change stays in sync.
         val window = flow {
             emit(null)
             val fresh = repository.refetch(m) ?: m
@@ -205,28 +217,49 @@ class SportsViewModel(
                 delay(60_000L)
             }
         }.distinctUntilChanged()
-        val search = combine(config, hasPlaylist, findAsked, window) { c, has, asked, w -> listOf(c, has, asked, w) }.transformLatest { (cv, hv, av, w) ->
+        val search = combine(config, hasPlaylist, window) { c, has, w -> listOf(c, has, w) }.transformLatest { (cv, hv, w) ->
             val c = cv as SportsConfig
             val has = hv as Boolean
-            val asked = av as Boolean
             if (!has) return@transformLatest emit(ChannelSearch.NotSearched)
             if (w == null) return@transformLatest emit(ChannelSearch.Checking)
             if (w != WatchWindow.Open) return@transformLatest emit(ChannelSearch.Closed(w as WatchWindow))
             val found = watchReader.found(m) { SportsMemory.rememberedFor(c, it) }
             when {
                 found != null -> emit(ChannelSearch.Found(found))
-                !asked -> emit(ChannelSearch.NotSearched)
                 else -> {
                     emit(ChannelSearch.Searching)
                     emit(ChannelSearch.Found(watchReader.watchFor(listOf(m)) { SportsMemory.rememberedFor(c, it) }[m.key].orEmpty()))
                 }
             }
         }.flowOn(Dispatchers.Default)
-        combine(boards, config, search, pageFilter, playlists) { b, c, s, f, lists ->
+        val inputs = combine(boards, config, search, pageFilter, playlists) { b, c, s, f, lists ->
+            MatchPageInputs(b, c, s, f, lists)
+        }
+        combine(inputs, observedVideoLabels) { input, qualityLabels ->
+            val b = input.board
+            val c = input.config
+            val s = input.search
+            val f = input.filter
+            val lists = input.playlists
             val appLanguage = Locale.getDefault().language
             val filter = f ?: WatchFilter.from(c, appLanguage, lists.map { it.first })
             val preferred = c.preferredLanguages(appLanguage).toList()
-            val opts = (s as? ChannelSearch.Found)?.options.orEmpty()
+            val opts = (s as? ChannelSearch.Found)?.options.orEmpty().map { option ->
+                val label = qualityLabels[option.channel.id]
+                if (label == null) option else {
+                    val rank = qualityRank(label)
+                    option.copy(
+                        actualVideoRank = rank,
+                        actualVideoLabel = displayVideoQuality(label),
+                        facets = option.facets.copy(qualityRank = when (rank) {
+                            4 -> 4 // UHD
+                            3, 2 -> 3 // 1440p/1080p
+                            1 -> 2 // 720p
+                            else -> 0
+                        }),
+                    )
+                }
+            }
             MatchPageState(
                 match = b.match(m.key) ?: m,
                 summary = b.summaries[m.key],
@@ -258,7 +291,6 @@ class SportsViewModel(
 
     fun open(match: Match?) {
         pageFilter.value = null
-        findAsked.value = false
         openMatch.value = match
     }
 
@@ -352,6 +384,30 @@ class SportsViewModel(
 
     companion object {
         private const val HOME_ROW_DELAY_MS = 3_000L
+        private const val MAX_REMEMBERED_RESOLUTIONS = 500
+        private const val VIDEO_QUALITY_4K = "4K"
+        private const val VIDEO_QUALITY_2K = "2K"
+
+        private fun qualityRank(label: String): Int {
+            when (label.uppercase()) {
+                VIDEO_QUALITY_4K -> return 4
+                VIDEO_QUALITY_2K -> return 3
+            }
+            val height = Regex("\\d+").find(label)?.value?.toIntOrNull() ?: return 0
+            return when {
+                height >= 2160 -> 4
+                height >= 1440 -> 3
+                height >= 1080 -> 2
+                height >= 720 -> 1
+                else -> 0
+            }
+        }
+
+        private fun displayVideoQuality(label: String): String = when (qualityRank(label)) {
+            4 -> VIDEO_QUALITY_4K
+            3 -> VIDEO_QUALITY_2K
+            else -> label
+        }
 
         fun reminderKey(startMs: Long, title: String) = "$startMs|$title"
     }
